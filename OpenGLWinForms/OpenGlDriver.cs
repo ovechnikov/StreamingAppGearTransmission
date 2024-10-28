@@ -36,11 +36,13 @@ internal class OpenGlDriver : IDisposable
     private const GLenum        GL_LINE_STRIP       = 0x0003;
     private const GLenum        GL_TRIANGLE_FAN     = 0x0006;
     private const GLenum        GL_POINTS           = 0x0000;
+    private const GLenum        GL_RGBA             = 0x1908;
     private const GLenum        GL_LINES            = 0x0001;
     private const GLenum        GL_QUAD_STRIP       = 0x0008;
     private const GLenum        GL_VERSION          = 0x1F02;
     private const GLenum        GL_EXTENSIONS       = 0x1F03;
     private const GLenum        GL_LIGHT0           = 0x4000;
+    private const GLenum        GL_UNSIGNED_BYTE    = 0x1401;
 
     #endregion
 
@@ -181,6 +183,9 @@ internal class OpenGlDriver : IDisposable
     [DllImport(openglDll)]
     public static extern GLuint glCreateProgram();
 
+    [DllImport(openglDll)]
+    public static extern void glReadPixels(GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, [Out] IntPtr pixels);
+
     #endregion
 
     #region GLU functions
@@ -201,6 +206,7 @@ internal class OpenGlDriver : IDisposable
     private delegate void   GlCompileShaderDelegate(GLuint shader);
     private delegate GLuint GlCreateProgramDelegate();
     private delegate GLuint GlCreateShaderDelegate(GLenum shaderType);
+    private delegate void   GlLinkProgramDelegate(GLuint program);
     private delegate void   GlUseProgramDelegate(GLuint program);
     private delegate void   GlUniform1fDelegate(GLint location, GLfloat v0);
     private delegate void   GlUniform3fDelegate(GLint location, GLfloat v0, GLfloat v1, GLfloat v2);
@@ -214,8 +220,6 @@ internal class OpenGlDriver : IDisposable
 
     // GLint glGetUniformLocation(GLuint program, const GLchar* name)
     private delegate GLint  GlGetUniformLocationDelegate(GLuint program, IntPtr name);
-
-    private delegate void   GlLinkProgramDelegate(GLuint program);
 
     // void glShaderSource(GLuint shader, GLsizei count, const GLchar**string, const GLint* length);
     private delegate void   GlShaderSourceDelegate(GLuint shader, GLsizei count, IntPtr stringSource, IntPtr length);
@@ -492,10 +496,14 @@ internal class OpenGlDriver : IDisposable
         _dlGear1 = LoadQuadGeometry(gear1);
         _dlGear2 = LoadQuadGeometry(gear2);
 
-        //TestCube cube = new();
-        //GLuint testList = LoadQuadGeometry(cube);
-
         #endregion
+
+        GLsizei v0 = 0;
+        byte[] pixelData = [];
+        GCHandle pixelDataHandle = GCHandle.Alloc(pixelData, GCHandleType.Pinned);
+        IntPtr pixelDataPtr = pixelDataHandle.AddrOfPinnedObject();
+
+        Task streaming = Task.Run(() => StreamingDriver.StartWebSocketServer(token));
 
         // Rendering Loop
         while (!token.IsCancellationRequested)
@@ -506,6 +514,14 @@ internal class OpenGlDriver : IDisposable
 
             // set the viewport to a square centered in the window:
             GLsizei v = Math.Min(_parentForm.ClientSize.Width, _parentForm.ClientSize.Height);
+            if (v != v0)
+            {
+                pixelDataHandle.Free();
+                pixelData = new byte[v * v * 4];
+                v0 = v;
+                pixelDataHandle = GCHandle.Alloc(pixelData, GCHandleType.Pinned);
+                pixelDataPtr = pixelDataHandle.AddrOfPinnedObject();
+            }
             GLint xl = (_parentForm.ClientSize.Width - v) / 2;
             GLint yb = (_parentForm.ClientSize.Height - v) / 2;
             glViewport(xl, yb, v, v);
@@ -549,10 +565,14 @@ internal class OpenGlDriver : IDisposable
 
             glCallList(_dlGear2);
 
+            // Read the pixel data from the framebuffer
+            glReadPixels(0, 0, v, v, GL_RGBA, GL_UNSIGNED_BYTE, pixelDataPtr);
+            StreamingDriver.SendPixelData(pixelData);
+
             // Swap buffers to display the rendered image
             _ = SwapBuffers(_hdlrDeviceContext);
         }
-
+        pixelDataHandle.Free();
     },
     token);
 
@@ -585,71 +605,7 @@ internal class OpenGlDriver : IDisposable
         return dList;
     }
 
-    //private static void Axes(float length)
-    //{
-    //    glBegin(GL_LINE_STRIP);
-    //    glVertex3f(length, 0.0f, 0.0f);
-    //    glVertex3f(0.0f, 0.0f, 0.0f);
-    //    glVertex3f(0.0f, length, 0.0f);
-    //    glEnd();
-    //    glBegin(GL_LINE_STRIP);
-    //    glVertex3f(0.0f, 0.0f, 0.0f);
-    //    glVertex3f(0.0f, 0.0f, length);
-    //    glEnd();
-
-    //    float fact = LENFRAC * length;
-    //    float b = BASEFRAC * length;
-
-    //    glBegin(GL_LINE_STRIP);
-    //    for (int i = 0; i < 4; i++)
-    //    {
-    //        int j = xorder[i];
-    //        if (j < 0)
-    //        {
-
-    //            glEnd();
-    //            glBegin(GL_LINE_STRIP);
-    //            j = -j;
-    //        }
-    //        j--;
-    //        glVertex3f(b + fact * xx[j], fact * xy[j], 0.0f);
-    //    }
-    //    glEnd();
-
-    //    glBegin(GL_LINE_STRIP);
-    //    for (int i = 0; i < 5; i++)
-    //    {
-    //        int j = yorder[i];
-    //        if (j < 0)
-    //        {
-
-    //            glEnd();
-    //            glBegin(GL_LINE_STRIP);
-    //            j = -j;
-    //        }
-    //        j--;
-    //        glVertex3f(fact * yx[j], b + fact * yy[j], 0.0f);
-    //    }
-    //    glEnd();
-
-    //    glBegin(GL_LINE_STRIP);
-    //    for (int i = 0; i < 6; i++)
-    //    {
-    //        int j = zorder[i];
-    //        if (j < 0)
-    //        {
-
-    //            glEnd();
-    //            glBegin(GL_LINE_STRIP);
-    //            j = -j;
-    //        }
-    //        j--;
-    //        glVertex3f(0.0f, fact * zy[j], b + fact * zx[j]);
-    //    }
-    //    glEnd();
-    //}
-
-    public void Dispose()
+     public void Dispose()
     {
         // Clean up OpenGL context when done
         _ = wglMakeCurrent(IntPtr.Zero, IntPtr.Zero);
